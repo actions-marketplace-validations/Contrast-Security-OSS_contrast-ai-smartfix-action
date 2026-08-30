@@ -7,24 +7,47 @@ This module tests the low-level agent infrastructure including:
 """
 
 import unittest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import Mock, patch, AsyncMock
 from pathlib import Path
 import asyncio
-import sys
+import os
+import tempfile
 
-# Mock ADK imports before importing our modules to prevent import errors
-# These mocks must be set before importing the modules that depend on them
-sys.modules['google.adk.agents'] = MagicMock()
-sys.modules['google.adk.tools.mcp_tool.mcp_toolset'] = MagicMock()
-sys.modules['google.genai'] = MagicMock()
-sys.modules['google.genai.types'] = MagicMock()
-
+# ADK mocks are set up globally in conftest.py before any imports
 from src.smartfix.domains.agents.mcp_manager import MCPToolsetManager  # noqa: E402
 from src.smartfix.domains.agents.sub_agent_executor import SubAgentExecutor  # noqa: E402
 
 
 class TestMCPToolsetManager(unittest.TestCase):
     """Test cases for MCPToolsetManager."""
+
+    def setUp(self):
+        """Set up required environment variables for tests."""
+        # Store original values to restore in tearDown
+        self._original_env = {
+            'GITHUB_WORKSPACE': os.environ.get('GITHUB_WORKSPACE'),
+            'GITHUB_REPOSITORY': os.environ.get('GITHUB_REPOSITORY'),
+            'GITHUB_SERVER_URL': os.environ.get('GITHUB_SERVER_URL'),
+            'GITHUB_TOKEN': os.environ.get('GITHUB_TOKEN'),
+        }
+
+        os.environ['GITHUB_WORKSPACE'] = tempfile.gettempdir()
+        os.environ['GITHUB_REPOSITORY'] = 'test/repo'
+        os.environ['GITHUB_SERVER_URL'] = 'https://github.com'
+        os.environ['GITHUB_TOKEN'] = 'test-token'
+        os.environ.setdefault('CONTRAST_HOST', 'test.contrastsecurity.com')
+        os.environ.setdefault('CONTRAST_ORG_ID', 'test-org')
+        os.environ.setdefault('CONTRAST_APP_ID', 'test-app')
+        os.environ.setdefault('CONTRAST_AUTHORIZATION_KEY', 'test-auth')
+        os.environ.setdefault('CONTRAST_API_KEY', 'test-api-key')
+
+    def tearDown(self):
+        """Restore original environment variables."""
+        for key, value in self._original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
     def test_initialization_default_platform(self):
         """Test MCPToolsetManager initialization with default platform."""
@@ -88,8 +111,8 @@ class TestMCPToolsetManager(unittest.TestCase):
     def test_get_tools_success(self, mock_toolset_class):
         """Test successful get_tools call."""
         # Create mock toolset with async get_tools
-        mock_toolset = MagicMock()
-        mock_tool = MagicMock()
+        mock_toolset = Mock()
+        mock_tool = Mock()
         mock_tool.name = 'test_tool'
         mock_toolset.get_tools = AsyncMock(return_value=[mock_tool])
         mock_toolset_class.return_value = mock_toolset
@@ -101,22 +124,23 @@ class TestMCPToolsetManager(unittest.TestCase):
 
         self.assertEqual(result, mock_toolset)
 
-    @patch('src.smartfix.domains.agents.mcp_manager.MCPToolset')
     @patch('src.smartfix.domains.agents.mcp_manager.error_exit')
-    def test_get_tools_failure(self, mock_error_exit, mock_toolset_class):
+    @patch('src.smartfix.domains.agents.mcp_manager.MCPToolset')
+    def test_get_tools_failure(self, mock_toolset_class, mock_error_exit):
         """Test get_tools failure handling."""
         # Make get_tools raise an exception
-        mock_toolset = MagicMock()
+        mock_toolset = Mock()
         mock_toolset.get_tools = AsyncMock(side_effect=Exception('Connection failed'))
         mock_toolset_class.return_value = mock_toolset
 
         manager = MCPToolsetManager()
         target_folder = Path('/test/folder')
 
+        # Call get_tools and verify error_exit is called
         asyncio.run(manager.get_tools(target_folder, 'test-remediation-id'))
 
-        # Verify error_exit was called
-        mock_error_exit.assert_called()
+        # Verify error_exit was called with correct parameters
+        mock_error_exit.assert_called_once_with('test-remediation-id', 'AGENT_FAILURE')
 
     @patch('subprocess.run')
     def test_clear_npm_cache_success(self, mock_subprocess):
@@ -145,8 +169,8 @@ class TestSubAgentExecutor(unittest.TestCase):
 
     def test_initialization_default_max_events(self):
         """Test SubAgentExecutor initialization with default max_events."""
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
-            config_mock = MagicMock()
+        with patch('src.config.get_config') as mock_config:
+            config_mock = Mock()
             config_mock.MAX_EVENTS_PER_AGENT = 100
             mock_config.return_value = config_mock
 
@@ -158,37 +182,36 @@ class TestSubAgentExecutor(unittest.TestCase):
 
     def test_initialization_custom_max_events(self):
         """Test SubAgentExecutor initialization with custom max_events."""
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config'):
+        with patch('src.config.get_config'):
             executor = SubAgentExecutor(max_events=50)
 
             self.assertEqual(executor.max_events, 50)
 
     @patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent')
     @patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm')
-    @patch('src.smartfix.domains.agents.sub_agent_executor.get_config')
+    @patch('src.config.get_config')
     def test_create_agent_success(self, mock_get_config, mock_litellm, mock_agent):
         """Test successful agent creation."""
         # Mock config
-        config_mock = MagicMock()
+        config_mock = Mock()
         config_mock.AGENT_MODEL = 'test-model'
-        config_mock.USE_CONTRAST_LLM = 'false'
+        config_mock.USE_CONTRAST_LLM = False
         mock_get_config.return_value = config_mock
 
         # Mock MCP manager
-        mock_mcp_tools = MagicMock()
+        mock_mcp_tools = Mock()
 
         executor = SubAgentExecutor()
         executor.mcp_manager.get_tools = AsyncMock(return_value=mock_mcp_tools)
 
         # Mock agent creation
-        mock_agent_instance = MagicMock()
+        mock_agent_instance = Mock()
         mock_agent.return_value = mock_agent_instance
 
         result = asyncio.run(executor.create_agent(
             target_folder=Path('/test'),
             remediation_id='test-123',
             session_id='test-session-123',
-            agent_type='fix',
             system_prompt='Test prompt'
         ))
 
@@ -197,32 +220,31 @@ class TestSubAgentExecutor(unittest.TestCase):
 
     @patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent')
     @patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm')
-    @patch('src.smartfix.domains.agents.sub_agent_executor.get_config')
+    @patch('src.config.get_config')
     def test_create_agent_with_contrast_llm(self, mock_get_config, mock_litellm, mock_agent):
         """Test agent creation with Contrast LLM configuration."""
         # Mock config with Contrast LLM enabled
-        config_mock = MagicMock()
+        config_mock = Mock()
         config_mock.AGENT_MODEL = 'test-model'
-        config_mock.USE_CONTRAST_LLM = 'true'
+        config_mock.USE_CONTRAST_LLM = True
         config_mock.CONTRAST_API_KEY = 'test-api-key'
         config_mock.CONTRAST_AUTHORIZATION_KEY = 'test-auth-key'
         mock_get_config.return_value = config_mock
 
         # Mock MCP manager
-        mock_mcp_tools = MagicMock()
+        mock_mcp_tools = Mock()
 
         executor = SubAgentExecutor()
         executor.mcp_manager.get_tools = AsyncMock(return_value=mock_mcp_tools)
 
         # Mock agent creation
-        mock_agent_instance = MagicMock()
+        mock_agent_instance = Mock()
         mock_agent.return_value = mock_agent_instance
 
         result = asyncio.run(executor.create_agent(
             target_folder=Path('/test'),
             remediation_id='test-123',
             session_id='session-456',
-            agent_type='qa',
             system_prompt='QA test prompt'
         ))
 
@@ -236,14 +258,15 @@ class TestSubAgentExecutor(unittest.TestCase):
         headers = call_kwargs['extra_headers']
         self.assertEqual(headers['Api-Key'], 'test-api-key')
         self.assertEqual(headers['Authorization'], 'test-auth-key')
-        self.assertEqual(headers['x-contrast-llm-session-id'], 'session-456')
+        self.assertEqual(headers['x-contrast-llm-feature'], 'SMARTFIX')
+        self.assertEqual(headers['x-contrast-llm-session-id'], 'test-123')
 
     @patch('src.smartfix.domains.agents.sub_agent_executor.error_exit')
-    @patch('src.smartfix.domains.agents.sub_agent_executor.get_config')
+    @patch('src.config.get_config')
     def test_create_agent_no_mcp_tools(self, mock_get_config, mock_error_exit):
         """Test agent creation fails when no MCP tools available."""
         # Mock config
-        config_mock = MagicMock()
+        config_mock = Mock()
         mock_get_config.return_value = config_mock
 
         executor = SubAgentExecutor()
@@ -253,28 +276,26 @@ class TestSubAgentExecutor(unittest.TestCase):
             target_folder=Path('/test'),
             remediation_id='test-123',
             session_id='test-session-123',
-            agent_type='fix',
             system_prompt='Test prompt'
         ))
 
         mock_error_exit.assert_called()
 
     @patch('src.smartfix.domains.agents.sub_agent_executor.error_exit')
-    @patch('src.smartfix.domains.agents.sub_agent_executor.get_config')
+    @patch('src.config.get_config')
     def test_create_agent_no_system_prompt(self, mock_get_config, mock_error_exit):
         """Test agent creation fails when no system prompt provided."""
         # Mock config
-        config_mock = MagicMock()
+        config_mock = Mock()
         mock_get_config.return_value = config_mock
 
         executor = SubAgentExecutor()
-        executor.mcp_manager.get_tools = AsyncMock(return_value=MagicMock())
+        executor.mcp_manager.get_tools = AsyncMock(return_value=Mock())
 
         asyncio.run(executor.create_agent(
             target_folder=Path('/test'),
             remediation_id='test-123',
             session_id='test-session-123',
-            agent_type='fix',
             system_prompt=None
         ))
 
@@ -285,7 +306,7 @@ class TestSubAgentExecutor(unittest.TestCase):
         executor = SubAgentExecutor()
 
         # Mock agent with stats
-        mock_agent = MagicMock()
+        mock_agent = Mock()
         mock_agent.gather_accumulated_stats_dict.return_value = {
             'token_usage': {'total_tokens': 1000},
             'cost_analysis': {'total_cost': 0.05}
@@ -301,7 +322,7 @@ class TestSubAgentExecutor(unittest.TestCase):
         executor = SubAgentExecutor()
 
         # Mock agent with stats including $ sign
-        mock_agent = MagicMock()
+        mock_agent = Mock()
         mock_agent.gather_accumulated_stats_dict.return_value = {
             'token_usage': {'total_tokens': 1000},
             'cost_analysis': {'total_cost': '$0.05'}
@@ -317,7 +338,7 @@ class TestSubAgentExecutor(unittest.TestCase):
         executor = SubAgentExecutor()
 
         # Mock agent that raises AttributeError (one of the caught exceptions)
-        mock_agent = MagicMock()
+        mock_agent = Mock()
         mock_agent.gather_accumulated_stats_dict.side_effect = AttributeError('Stats error')
 
         total_tokens, total_cost = executor._collect_statistics(mock_agent)
@@ -331,10 +352,10 @@ class TestSubAgentExecutor(unittest.TestCase):
         executor = SubAgentExecutor()
 
         # Mock event with text content
-        mock_event = MagicMock()
+        mock_event = Mock()
         mock_event.content.text = 'Agent response text'
 
-        result = executor._process_content(mock_event, 'fix')
+        result = executor._process_content(mock_event)
 
         self.assertEqual(result, 'Agent response text')
 
@@ -343,14 +364,14 @@ class TestSubAgentExecutor(unittest.TestCase):
         executor = SubAgentExecutor()
 
         # Mock event with parts (no text attribute)
-        mock_event = MagicMock()
+        mock_event = Mock()
         # Remove the text attribute so hasattr returns False
         del mock_event.content.text
-        mock_part = MagicMock()
+        mock_part = Mock()
         mock_part.text = 'Part text'
         mock_event.content.parts = [mock_part]
 
-        result = executor._process_content(mock_event, 'fix')
+        result = executor._process_content(mock_event)
 
         self.assertEqual(result, 'Part text')
 
@@ -359,10 +380,10 @@ class TestSubAgentExecutor(unittest.TestCase):
         executor = SubAgentExecutor()
 
         # Mock event with no content
-        mock_event = MagicMock()
+        mock_event = Mock()
         mock_event.content = None
 
-        result = executor._process_content(mock_event, 'fix')
+        result = executor._process_content(mock_event)
 
         self.assertIsNone(result)
 
@@ -372,13 +393,13 @@ class TestSubAgentExecutor(unittest.TestCase):
         telemetry = []
 
         # Mock event with function calls
-        mock_event = MagicMock()
-        mock_call = MagicMock()
+        mock_event = Mock()
+        mock_call = Mock()
         mock_call.name = 'read_file'
         mock_call.args = {'path': '/test/file.py'}
         mock_event.get_function_calls.return_value = [mock_call]
 
-        executor._process_function_calls(mock_event, 'fix', telemetry)
+        executor._process_function_calls(mock_event, telemetry)
 
         self.assertEqual(len(telemetry), 1)
         self.assertEqual(telemetry[0]['tool'], 'read_file')
@@ -390,13 +411,13 @@ class TestSubAgentExecutor(unittest.TestCase):
         telemetry = []
 
         # Mock event with function response
-        mock_event = MagicMock()
-        mock_response = MagicMock()
+        mock_event = Mock()
+        mock_response = Mock()
         mock_response.name = 'read_file'
         mock_response.response = 'isError = False, content = file contents'
         mock_event.get_function_responses.return_value = [mock_response]
 
-        executor._process_function_responses(mock_event, 'fix', telemetry)
+        executor._process_function_responses(mock_event, telemetry)
 
         self.assertEqual(len(telemetry), 1)
         self.assertEqual(telemetry[0]['tool'], 'read_file')
@@ -408,13 +429,13 @@ class TestSubAgentExecutor(unittest.TestCase):
         telemetry = []
 
         # Mock event with error response
-        mock_event = MagicMock()
-        mock_response = MagicMock()
+        mock_event = Mock()
+        mock_response = Mock()
         mock_response.name = 'write_file'
         mock_response.response = 'isError = True, error = permission denied'
         mock_event.get_function_responses.return_value = [mock_response]
 
-        executor._process_function_responses(mock_event, 'fix', telemetry)
+        executor._process_function_responses(mock_event, telemetry)
 
         self.assertEqual(len(telemetry), 1)
         self.assertEqual(telemetry[0]['tool'], 'write_file')

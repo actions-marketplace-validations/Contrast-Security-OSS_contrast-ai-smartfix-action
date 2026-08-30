@@ -2,7 +2,7 @@
 # #%L
 # Contrast AI SmartFix
 # %%
-# Copyright (C) 2025 Contrast Security, Inc.
+# Copyright (C) 2026 Contrast Security, Inc.
 # %%
 # Contact: support@contrastsecurity.com
 # License: Commercial
@@ -20,9 +20,10 @@
 import os
 import json
 import re
-from typing import List, Optional, TypedDict
+from typing import List, Optional, Set, TypedDict
 from src.utils import run_command, debug_log, log, error_exit, CommandExecutionError
 from src.smartfix.shared.failure_categories import FailureCategory
+from src.smartfix.shared.constants import CLASSIC, NORTHSTAR_ONLY
 from src.config import get_config
 from src.smartfix.shared.coding_agents import CodingAgents
 from src.smartfix.domains.scm.git_operations import GitOperations
@@ -31,8 +32,55 @@ from src.github.constants import (
     GITHUB_MAX_PR_BODY_SIZE,
     GITHUB_MAX_ISSUE_BODY_SIZE,
     GITHUB_PR_LIST_LIMIT,
-    GITHUB_WORKFLOW_RUN_LIMIT
+    GITHUB_WORKFLOW_RUN_LIMIT,
+    SMARTFIX_LABEL_PREFIXES,
 )
+
+
+def _label_name(label) -> str:
+    """Extract a label's name string.
+
+    Handles both GitHub's label dicts (each with a "name" key) and plain
+    label name strings (e.g. GitLab's REST API shape).
+    """
+    return label.get("name", "") if isinstance(label, dict) else str(label)
+
+
+def extract_vulnerability_info(labels: list) -> str:
+    """Extract primary finding identifier from PR labels.
+
+    Recognises both Classic (contrast-vuln-id:VULN-*) and NorthStar
+    (contrast-issue-id:*) label formats.
+
+    Args:
+        labels: List of label dicts or plain label name strings — see
+            _label_name().
+    """
+    primary_id = "unknown"
+
+    for label in labels:
+        label_name = _label_name(label)
+        if label_name.startswith("contrast-vuln-id:VULN-"):
+            # Extract UUID from label format "contrast-vuln-id:VULN-{vuln_uuid}"
+            label_name_parts = label_name.split("VULN-")
+            primary_id = label_name_parts[1] if len(label_name_parts) > 1 else "unknown"
+            if primary_id and primary_id != "unknown":
+                debug_log(f"Extracted vulnerability UUID from PR label: {primary_id}")
+                break
+        elif label_name.startswith("contrast-issue-id:"):
+            # Extract issueId from label format "contrast-issue-id:{issueId}"
+            extracted = label_name[len("contrast-issue-id:"):]
+            if extracted:
+                primary_id = extracted
+                debug_log(f"Extracted NorthStar issue ID from PR label: {primary_id}")
+                break
+            else:
+                debug_log(f"Found contrast-issue-id label with empty value on PR label '{label_name}'; skipping.")
+
+    if primary_id == "unknown":
+        debug_log("Could not extract finding identifier from PR labels. Telemetry may be incomplete.")
+
+    return primary_id
 
 
 class PRInfo(TypedDict):
@@ -171,6 +219,44 @@ class GitHubOperations(ScmOperations):
         else:
             log("NOTE: In testing mode, not exiting on Copilot assignment failure", is_warning=True)
 
+    def get_pr_actual_state(self, pr_number: int) -> Optional[str]:
+        """
+        Returns the actual GitHub state of a PR: 'OPEN', 'MERGED', or 'CLOSED'.
+        Returns None on error (caller should skip this PR).
+
+        Args:
+            pr_number: The PR number to check
+
+        Returns:
+            Optional[str]: 'OPEN', 'MERGED', 'CLOSED', or None on error
+        """
+        try:
+            result = run_command(
+                ['gh', 'pr', 'view', str(pr_number), '--repo', self.config.GITHUB_REPOSITORY,
+                 '--json', 'state'],
+                env=self.get_gh_env(),
+                check=False
+            )
+            if result is None:
+                debug_log(f"Failed to get PR state for PR #{pr_number}")
+                return None
+
+            data = json.loads(result.strip())
+            state = data.get('state', '').upper()
+
+            if state in ('OPEN', 'MERGED', 'CLOSED'):
+                return state
+            else:
+                debug_log(f"Unexpected PR state '{state}' for PR #{pr_number}")
+                return None
+
+        except (json.JSONDecodeError, ValueError) as e:
+            debug_log(f"Error parsing PR state for PR #{pr_number}: {e}")
+            return None
+        except Exception as e:
+            debug_log(f"Exception while getting PR state for PR #{pr_number}: {e}")
+            return None
+
     def get_pr_changed_files_count(self, pr_number: int) -> int:
         """
         Get the number of changed files in a PR using GitHub CLI.
@@ -233,10 +319,18 @@ class GitHubOperations(ScmOperations):
                 debug_log(f"Error checking if Issues are enabled, assuming they are: {e}")
                 return True
 
-    def generate_label_details(self, vuln_uuid: str) -> tuple[str, str, str]:
-        """Generates the label name, description, and color."""
-        label_name = f"contrast-vuln-id:VULN-{vuln_uuid}"
-        label_description = "Vulnerability identified by Contrast AI SmartFix"
+    def generate_label_details(self, vuln_uuid: str, mode: str = CLASSIC, issue_id: Optional[str] = None) -> tuple[str, str, str]:
+        """Generates the label name, description, and color.
+
+        For NORTHSTAR_ONLY mode uses contrast-issue-id:{issueId}.
+        For CLASSIC mode uses contrast-vuln-id:VULN-{vuln_uuid}.
+        """
+        if mode == NORTHSTAR_ONLY and issue_id:
+            label_name = f"contrast-issue-id:{issue_id}"
+            label_description = "Issue identified by Contrast AI SmartFix"
+        else:
+            label_name = f"contrast-vuln-id:VULN-{vuln_uuid}"
+            label_description = "Vulnerability identified by Contrast AI SmartFix"
         label_color = "ff0000"  # Red
         return label_name, label_description, label_color
 
@@ -283,27 +377,16 @@ class GitHubOperations(ScmOperations):
         ]
 
         try:
-            # Run with check=False to handle the label already existing
-            import subprocess
-            process = subprocess.run(
-                label_command,
-                env=gh_env,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-
-            if process.returncode == 0:
-                debug_log(f"Label '{label_name}' created successfully.")
+            run_command(label_command, env=gh_env, check=True)
+            debug_log(f"Label '{label_name}' created successfully.")
+            return True
+        except CommandExecutionError as e:
+            # Race condition: label was created between our check and create
+            if e.stderr and "already exists" in e.stderr.lower():
+                debug_log(f"Label '{label_name}' already exists (race condition).")
                 return True
-            else:
-                # Check for "already exists" type of error which is OK
-                if "already exists" in process.stderr.lower():
-                    log(f"Label '{label_name}' already exists.")
-                    return True
-                else:
-                    log(f"Error creating label: {process.stderr}", is_error=True)
-                    return False
+            log(f"Failed to create label '{label_name}': {e.stderr or e}", is_error=True)
+            return False
         except Exception as e:
             log(f"Exception while creating label: {e}", is_error=True)
             return False
@@ -404,12 +487,12 @@ class GitHubOperations(ScmOperations):
         debug_log(f"No existing OPEN or MERGED PR found for label {label_name}.")
         return "NONE"
 
-    def count_open_prs_with_prefix(self, label_prefix: str, remediation_id: str) -> int:
+    def count_open_prs_with_prefix(self, label_prefix, remediation_id: str) -> int:
         """
         Counts the number of open GitHub PRs with at least one label starting with the given prefix.
 
         Args:
-            label_prefix: Prefix to match against PR labels
+            label_prefix: Prefix string or tuple of prefix strings to match against PR labels
             remediation_id: Remediation ID for error context
         """
         log(f"Counting open PRs with label prefix: '{label_prefix}' (remediation: {remediation_id})")
@@ -486,7 +569,7 @@ class GitHubOperations(ScmOperations):
         """Generates the Pull Request title."""
         return f"Fix: {vuln_title[:100]}"
 
-    def create_pr(self, title: str, body: str, remediation_id: str, base_branch: str, label: str) -> str:
+    def create_pr(self, title: str, body: str, remediation_id: str, base_branch: str) -> str:
         """Creates a GitHub Pull Request.
 
         Returns:
@@ -540,16 +623,6 @@ class GitHubOperations(ScmOperations):
             pr_url = run_command(pr_command, env=gh_env, check=True)
             if pr_url:
                 log(f"Successfully created PR: {pr_url}")
-
-                # Add labels separately using gh pr edit (works with GITHUB_TOKEN)
-                if label:
-                    try:
-                        # Extract PR number from URL (format: https://github.com/owner/repo/pull/123)
-                        pr_number = int(pr_url.strip().split('/')[-1])
-                        debug_log(f"Extracted PR number {pr_number} from URL, adding label: {label}")
-                        self.add_labels_to_pr(pr_number, [label])
-                    except (ValueError, IndexError) as e:
-                        log(f"Could not extract PR number from URL to add label: {e}", is_warning=True)
             return pr_url
 
         except FileNotFoundError:
@@ -749,6 +822,37 @@ class GitHubOperations(ScmOperations):
             return True
         except Exception as e:
             log(f"Failed to add labels to issue #{issue_number}: {e}", is_error=True)
+            return False
+
+    def remove_labels_from_issue(self, issue_number: int, labels: List[str]) -> bool:
+        """
+        Remove labels from an existing issue.
+
+        Args:
+            issue_number: The issue number to remove labels from
+            labels: List of label names to remove
+
+        Returns:
+            bool: True if labels were successfully removed (or there was nothing to remove), False otherwise
+        """
+        if not labels:
+            debug_log("No labels provided to remove from issue")
+            return True
+
+        log(f"Removing labels from issue #{issue_number}: {labels}")
+        remove_labels_command = [
+            "gh", "issue", "edit",
+            "--repo", self.config.GITHUB_REPOSITORY,
+            str(issue_number),
+            "--remove-label", ",".join(labels)
+        ]
+
+        try:
+            run_command(remove_labels_command, env=self.get_gh_env(), check=True)
+            log(f"Successfully removed labels from issue #{issue_number}: {labels}")
+            return True
+        except Exception as e:
+            log(f"Failed to remove labels from issue #{issue_number}: {e}", is_error=True)
             return False
 
     def find_issue_with_label(self, label: str) -> int:
@@ -1103,6 +1207,8 @@ class GitHubOperations(ScmOperations):
         for label_name in labels:
             if label_name.startswith("contrast-vuln-id:"):
                 self.ensure_label(label_name, "Vulnerability identified by Contrast", "ff0000")  # Red
+            elif label_name.startswith("contrast-issue-id:"):
+                self.ensure_label(label_name, "Issue identified by Contrast AI SmartFix", "ff0000")  # Red
             elif label_name.startswith("smartfix-id:"):
                 self.ensure_label(label_name, "Remediation ID for Contrast vulnerability", "0075ca")  # Blue
             else:
@@ -1124,6 +1230,56 @@ class GitHubOperations(ScmOperations):
         except Exception as e:
             log(f"Failed to add labels to PR #{pr_number}: {e}", is_error=True)
             return False
+
+    def remove_labels_from_pr(self, pr_number: int, labels: List[str]) -> bool:
+        """
+        Remove labels from an existing pull request.
+
+        Args:
+            pr_number: The PR number to remove labels from
+            labels: List of label names to remove
+
+        Returns:
+            bool: True if labels were successfully removed (or there was nothing to remove), False otherwise
+        """
+        if not labels:
+            debug_log("No labels provided to remove from PR")
+            return True
+
+        log(f"Removing labels from PR #{pr_number}: {labels}")
+        remove_labels_command = [
+            "gh", "pr", "edit",
+            "--repo", self.config.GITHUB_REPOSITORY,
+            str(pr_number),
+            "--remove-label", ",".join(labels)
+        ]
+
+        try:
+            run_command(remove_labels_command, env=self.get_gh_env(), check=True)
+            log(f"Successfully removed labels from PR #{pr_number}: {labels}")
+            return True
+        except Exception as e:
+            log(f"Failed to remove labels from PR #{pr_number}: {e}", is_error=True)
+            return False
+
+    def filter_smartfix_labels(self, labels: list) -> List[str]:
+        """
+        Filter a label list down to those SmartFix manages — labels prefixed
+        with smartfix-id: or contrast-vuln-id:.
+
+        Args:
+            labels: List of label dicts or plain label name strings — see
+                _label_name().
+
+        Returns:
+            List[str]: Names of SmartFix-managed labels, in input order
+        """
+        names: List[str] = []
+        for label in labels:
+            name = _label_name(label)
+            if name.startswith(SMARTFIX_LABEL_PREFIXES):
+                names.append(name)
+        return names
 
     def get_issue_comments(self, issue_number: int, author: str = None) -> List[dict]:
         """
@@ -1507,3 +1663,52 @@ class GitHubOperations(ScmOperations):
         except Exception as e:
             log(f"Error finding latest branch: {str(e)}", is_error=True)
             return None
+
+    def get_pr_changed_files(self, pr_number: int) -> List[str]:
+        """Return the list of file paths changed in a pull request.
+
+        Uses `gh pr view --json files` to fetch the file list.
+        Returns an empty list on any error.
+        """
+        command = [
+            "gh", "pr", "view",
+            str(pr_number),
+            "--repo", self.config.GITHUB_REPOSITORY,
+            "--json", "files",
+            "--jq", ".files",
+        ]
+        try:
+            output = run_command(command, env=self.get_gh_env(), check=False)
+            if not output or output.strip() in ("null", "[]", ""):
+                return []
+            files = json.loads(output)
+            return [f["path"] for f in files if f.get("path")]
+        except Exception as e:
+            log(f"Could not retrieve changed files for PR #{pr_number}: {e}", is_warning=True)
+            return []
+
+    def add_reviewers_to_pr(self, pr_number: int, reviewers: Set[str]) -> bool:
+        """Request review from the given set of GitHub handles on a pull request.
+
+        Uses `gh pr edit --add-reviewer` to assign reviewers.
+        Returns True on success or when the reviewer set is empty, False on error.
+        """
+        if not reviewers:
+            debug_log("No reviewers to add to PR")
+            return True
+
+        reviewer_list = ",".join(sorted(reviewers))
+        log(f"Adding reviewers to PR #{pr_number}: {reviewer_list}")
+        command = [
+            "gh", "pr", "edit",
+            str(pr_number),
+            "--repo", self.config.GITHUB_REPOSITORY,
+            "--add-reviewer", reviewer_list,
+        ]
+        try:
+            run_command(command, env=self.get_gh_env(), check=True)
+            log(f"Successfully added reviewers to PR #{pr_number}: {reviewer_list}")
+            return True
+        except Exception as e:
+            log(f"Failed to add reviewers to PR #{pr_number}: {e}", is_warning=True)
+            return False

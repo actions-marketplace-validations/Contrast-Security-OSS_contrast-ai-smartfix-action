@@ -14,9 +14,9 @@ The SmartFix Coding Agent uses Contrast vulnerability data with a team of agenti
 
 ### Prerequisites
 
-* **Contrast Assess:** You need an active Contrast Assess deployment identifying vulnerabilities in your application.
+* **Contrast Security:** You need an active Contrast deployment identifying vulnerabilities in your application — either Contrast Assess (IAST) for runtime findings, or NorthStar (SAST) for static-only organizations. NorthStar-only organizations can also have SmartFix address IAST issues for a given application by configuring an Application ID, once that application is instrumented with the Contrast Agent.
 * **GitHub:** Your project must be hosted on GitHub and use GitHub Actions.  In the GitHub repository's Settings, enable the Actions > General > Workflow Permissions checkbox for "Allow GitHub Actions to create and approve pull requests".
-* **Contrast API Credentials:** You will need your Contrast Host, Organization ID, Application ID, Authorization Key, and API Key values.  To find the app ID, visit the application page in the Contrast web UI, then use the last UUID in the URL (immediately after `/applications/`) as the app ID value.  **Suggestion:** Setup an API-only service user named “Contrast AI SmartFix” in your Organization Settings in your Contrast SaaS instance.  At a minimum, it should have the “View Organization” permission and “Edit Application” permission for this application.  This service user’s `contrast_authorization_key` value and the Organization’s `contrast_api_key` value should be used in the workflow.
+* **Contrast API Credentials:** You will need your Contrast Host, Organization ID, Authorization Key, and API Key values.  For repositories with IAST findings, also provide your Application ID — visit the application page in the Contrast web UI and use the last UUID in the URL (immediately after `/applications/`).  For NorthStar-only (SAST-only) organizations, the Application ID is optional: omit it and SmartFix runs in SAST-only mode, addressing static findings repo-wide; set it and SmartFix will also address IAST issues for that specific application.  **Suggestion:** Set up an API-only service user named “Contrast AI SmartFix” in your Organization Settings in your Contrast SaaS instance.  At a minimum, it should have the “View Organization” permission and “Edit Application” permission for this application.  This service user’s `contrast_authorization_key` value and the Organization’s `contrast_api_key` value should be used in the workflow.
 * **GitHub Token Permissions:** The GitHub token must have `contents: write` and `pull-requests: write` permissions. These permissions must be explicitly set in your workflow file, as they are in the example config file, below.  Note, the SmartFix Coding Agent uses the internal GitHub token for Actions; you do not need to create a Personal Access Token (PAT).
 * **LLM Access (Optional):** SmartFix uses Contrast's LLM service for seamless setup. If you prefer to use your own LLM provider (BYOLLM), ensure that you have API access to one of our recommended LLMs. If using an AWS Bedrock model, please see Amazon's User Guide on [model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access-modify.html).
 
@@ -30,7 +30,7 @@ Secrets:
 Variables:
 * CONTRAST_HOST (The host name of your Contrast SaaS instance, e.g. 'app.contrastsecurity.com')
 * CONTRAST_ORG_ID (The UUID of your Contrast organization)
-* CONTRAST_APP_ID (The UUID that is specific to the application in this repository.)
+* CONTRAST_APP_ID (The UUID that is specific to the application in this repository. Optional for NorthStar-only organizations — omit to fix SAST findings repo-wide, or set it to also address IAST issues for that application.)
 * Any other non-secret values, such as the AWS region for a Bedrock-provided LLM - only needed if using BYOLLM
 
 ### Installation and Configuration
@@ -97,7 +97,7 @@ jobs:
           # Contrast Configuration
           contrast_host: ${{ vars.CONTRAST_HOST }} # The host name of your Contrast SaaS instance, e.g. 'app.contrastsecurity.com'
           contrast_org_id: ${{ vars.CONTRAST_ORG_ID }} # The UUID of your Contrast organization
-          contrast_app_id: ${{ vars.CONTRAST_APP_ID }} # The UUID that is specific to the application in this repository.
+          contrast_app_id: ${{ vars.CONTRAST_APP_ID }} # Optional for NorthStar-only orgs: omit for SAST-only repo-wide, set to also fix IAST issues for this app
           contrast_authorization_key: ${{ secrets.CONTRAST_AUTHORIZATION_KEY }}
           contrast_api_key: ${{ secrets.CONTRAST_API_KEY }}
 
@@ -132,9 +132,9 @@ jobs:
 
 **Important:**
 
-* Store all sensitive values (API keys, tokens) as GitHub Secrets in your repository or Github organization settings.
+* Store all sensitive values (API keys, tokens) as GitHub Secrets in your repository or GitHub organization settings.
 * Replace `v1` with the specific version of the SmartFix GitHub Action you intend to use.
-* The `build_command` configured for the `generate_fixes` job must be an appropriate build command for your project and is required for the proper functioning of SmartFix.  A `build_command` that runs your project's unit tests would be doubly useful as it would enable SmartFix to attempt to correct any changes that break your project's tests.  Please remember to do any additional setup for your `build_command` (such as library installation) in the `generate_fixes` job as a new step preceeding the `Run Contrast AI SmartFix - Generate Fixes Action` step.  For details about the libraries that come pre-installed with Github's Ubuntu runner, please visit https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md.  For details about GitHub's Windows runner, please visit https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md.
+* The `build_command` configured for the `generate_fixes` job must be an appropriate build command for your project and is required for the proper functioning of SmartFix.  A `build_command` that runs your project's unit tests would be doubly useful as it would enable SmartFix to attempt to correct any changes that break your project's tests.  Please remember to do any additional setup for your `build_command` (such as library installation) in the `generate_fixes` job as a new step preceeding the `Run Contrast AI SmartFix - Generate Fixes Action` step.  For details about the libraries that come pre-installed with GitHub's Ubuntu runner, please visit https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md.  For details about GitHub's Windows runner, please visit https://github.com/actions/runner-images/blob/main/images/windows/Windows2025-Readme.md.
 * The optional `formatting_command` will be run after SmartFix makes code changes to resolve the vulnerability and prior to any subsequent `build_command` invocations.  We recommend supplying a `formatting_command` to fix code style issues in your project as it is an easy way to correct a common class of build-breaking problems.
 
 ### LLM Configuration for the SmartFix Coding Agent
@@ -215,7 +215,7 @@ Note: the SmartFix action's setup steps rely on the bash shell.  Please ensure t
 
 SmartFix focuses on remediating:
 
-* **CRITICAL** and **HIGH** severity vulnerabilities identified by Contrast Assess.
+* **CRITICAL** and **HIGH** severity vulnerabilities identified by Contrast, including IAST findings from Contrast Assess, static SAST findings from NorthStar, and — for NorthStar-only organizations that configure an Application ID — IAST findings for that application.
 * **Exclusions:**
   * Cross-Site Request Forgery (CSRF) is currently excluded due to the complexity of fixes often requiring API changes.
   * Other specific vulnerability types may be excluded based on ongoing testing by Contrast Labs.
@@ -241,7 +241,7 @@ SmartFix focuses on remediating:
    * If SmartFix sees that it has reached the configured `max_open_prs` number of concurrently open SmartFix PRs, it will end its workflow run.
    * If SmartFix has reached its internal time limit of 3 hours of processing time for some reason, it will stop the workflow run instead of requesting a new vulnerability to resolve.
    * If SmartFix encounters an exception of some kind, it will stop the workflow run.
-11. **Exceptions:** Sometimes things go wrong.  When SmartFix cannot generate a fix for the vulnerability, it will log the reason why, try to clean up the Github feature branches that have been made for that vulnerability, and exit the workflow early.
+11. **Exceptions:** Sometimes things go wrong.  When SmartFix cannot generate a fix for the vulnerability, it will log the reason why, try to clean up the GitHub feature branches that have been made for that vulnerability, and exit the workflow early.
 12. **Guardrails:** SmartFix has several configurable and internal guardrails:
    * *Time limit* - SmartFix has an internal time limit of 3 hours.  If it goes over 3 hours of processing time, it will not request another vulnerability to resolve.
    * `max_open_prs` - SmartFix offers this configurable value to control the maximum number concurrently open SmartFix PRs
@@ -258,7 +258,8 @@ The following are key inputs for the SmartFix GitHub Action using SmartFix Codin
 | `base_branch` | Base branch for PRs. | No | `${{ github.event.repository.default_branch }}` |
 | `contrast_host` | Contrast Security API host. | Yes |  |
 | `contrast_org_id` | Contrast Organization ID. | Yes |  |
-| `contrast_app_id` | Contrast Application ID for the repository. | Yes |  |
+| `contrast_app_id` | Contrast Application ID for the repository. Optional for NorthStar-only organizations — set it to also address IAST issues for that application, or omit for SAST-only. | No |  |
+| `contrast_app_ids` | Contrast Application IDs for monorepos (JSON array string, e.g. `["id-1", "id-2"]`). Optional alternative to `contrast_app_id`. | No |  |
 | `contrast_authorization_key` | Contrast Authorization Key. | Yes |  |
 | `contrast_api_key` | Contrast API Key. | Yes |  |
 | `use_contrast_llm` | Use Contrast LLM service. Set to 'false' to use your own LLM provider. | No | `true` |
@@ -268,13 +269,71 @@ The following are key inputs for the SmartFix GitHub Action using SmartFix Codin
 | `aws_bearer_token_bedrock` | AWS Bedrock API Bearer Token (alternative to IAM credentials). Use with caution - less secure than IAM. | No |  |
 | `aws_region` | AWS Region for Bedrock (required for all Bedrock auth methods: IAM or bearer token). | No |  |
 | `gemini_api_key` | Gemini API key (if using Gemini). | No |  |
-| `build_command` | Command to build the application (for QA). | Yes, for generating fixes |  |
-| `formatting_command` | Command to format code. | No |  |
+| `build_command` | Command to build the application (for QA). **Auto-detected** if not provided | No (auto-detected) | Auto-detected |
+| `formatting_command` | Command to format code. **Auto-detected** if not provided | No | Auto-detected |
 | `max_open_prs` | Maximum number of open PRs SmartFix can create. | No | `5` |
 | `debug_mode` | Enable verbose logging. | No | `false` |
 | `skip_qa_review` | Skip the QA review step (not recommended). | No | `false` |
 | `skip_writing_security_test` | Skip attempting to write a security test for the fix. | No | `false` |
+| `use_smartfix_instructions` | Read `SMARTFIX_INSTRUCTIONS.md` from the repo root on the base branch and inject it verbatim into the fix agent prompt. See [Custom Instructions](#custom-instructions). | No | `true` |
+| `use_repo_agent_instructions` | Fall back to existing agent instruction files (`.github/copilot-instructions.md`, `AGENTS.md`, `CLAUDE.md`, `.cursorrules`) if `SMARTFIX_INSTRUCTIONS.md` is absent or disabled. See [Custom Instructions](#custom-instructions). | No | `true` |
 | `enable_full_telemetry` | Control how much telemetry data is sent back to Contrast. When set to 'true' (default), sends complete log files and build commands. When 'false', sensitive build commands and full logs are omitted. | No | `true` |
+
+## Custom Instructions
+
+SmartFix can inject your team's coding standards directly into the fix agent prompt, giving the agent project-specific context about preferred libraries, naming conventions, architectural patterns, and testing standards.
+
+Instructions are always read from the configured `base_branch` via `git show`, not from the workspace filesystem. This means:
+- The base-branch version is always used, regardless of which branch the action is running on.
+- Symlink traversal attacks are impossible — git's object model resolves file contents without any filesystem path resolution.
+
+### Source A: `SMARTFIX_INSTRUCTIONS.md` (Recommended)
+
+Create a `SMARTFIX_INSTRUCTIONS.md` file in your repository root with instructions written specifically for SmartFix. This file's contents are injected under a `## Repository-Specific Coding Standards` header at the end of the fix agent prompt; leading and trailing whitespace/newlines may be trimmed.
+
+**Example `SMARTFIX_INSTRUCTIONS.md`:**
+
+```markdown
+## Security Libraries
+- Use OWASP Java Encoder for all HTML/JS/URL output encoding.
+- Never write custom escaping logic.
+
+## SQL / Data Access
+- All queries must use parameterized Spring Data JPA repositories.
+- Never concatenate user input into SQL or JPQL strings.
+
+## Code Style
+- Follow existing package structure: controllers, services, models.
+- Prefer constructor injection over field injection.
+```
+
+Controlled by the `use_smartfix_instructions` input (default: `true`).
+
+### Source B: Existing Agent Instruction Files (Fallback)
+
+If `SMARTFIX_INSTRUCTIONS.md` is absent or `use_smartfix_instructions` is `false`, SmartFix falls back to the first of the following files it finds on the base branch, in priority order:
+
+1. `.github/copilot-instructions.md`
+2. `AGENTS.md`
+3. `CLAUDE.md`
+4. `.cursorrules`
+
+When using a Source B file, SmartFix prepends a framing directive instructing the agent to apply coding style rules while ignoring any human-only workflow instructions (PR review processes, ticket systems, branch naming conventions, etc.).
+
+Controlled by the `use_repo_agent_instructions` input (default: `true`).
+
+### Disabling Custom Instructions
+
+Both sources can be independently disabled:
+
+```yaml
+- name: Run Contrast AI SmartFix
+  uses: Contrast-Security-OSS/contrast-ai-smartfix-action@v1
+  with:
+    use_smartfix_instructions: 'false'      # Skip SMARTFIX_INSTRUCTIONS.md
+    use_repo_agent_instructions: 'false'    # Skip all Source B files
+    # ... other inputs
+```
 
 ## Telemetry
 
@@ -307,7 +366,7 @@ SmartFix collects telemetry data to help improve the service and diagnose issues
   * Ensure the `github_token` has the necessary permissions to create PRs in the repository.
   * Check for branch protection rules that might prevent PR creation.
 * **No Fixes Generated:**
-  * Confirm there are eligible CRITICAL or HIGH severity vulnerabilities in Contrast Assess for the configured `contrast_app_id`. SmartFix only attempts to fix vulnerabilities that are in the REPORTED state.
+  * Confirm there are eligible CRITICAL or HIGH severity vulnerabilities in Contrast. For Contrast Assess (IAST) deployments, check under the configured `contrast_app_id`. For NorthStar-only deployments, confirm there are eligible SAST findings in your Contrast organization (checked repo-wide); if `contrast_app_id`/`contrast_app_ids` is configured, also confirm there are eligible IAST findings for that application. SmartFix only attempts to fix vulnerabilities that are in the REPORTED state.
   * Check the `max_open_prs` limit; if the number of PRs SmartFix has created that are still open matches this limit, no new PRs will be created.
   * Review the GitHub Action logs for messages indicating why vulnerabilities might have been skipped.
 * **Incorrect Fixes:** The AI-generated fixes should **always** be reviewed carefully. If a fix is incorrect or incomplete:
@@ -315,7 +374,8 @@ SmartFix collects telemetry data to help improve the service and diagnose issues
 
 ## Best Practices & Recommendations
 
-* **Ensure the `build_command` Runs the Tests:** This allows SmartFix to catch and fix any tests that may fail due to its changes. It also allows it to run the security tests it creates, if that option is enabled.
+* **Leverage Auto-Detection:** SmartFix can automatically detect build and format commands for most common build systems (Maven, Gradle, npm, pytest, etc.). You typically don't need to specify `build_command` or `formatting_command` manually. See [Supported Build Systems](./supported-build-systems.md) for the full list. If auto-detection fails, you can always override it manually.
+* **Ensure the Build Command Runs Tests:** If manually specified, make sure your build command runs your test suite. This allows SmartFix to catch and fix any tests that may fail due to its changes. It also allows it to run the security tests it creates, if that option is enabled.  If SmartFix auto-detects the build command, it will attempt to run any tests available.
 * **Review PRs Thoroughly:** Always carefully review the code changes proposed by SmartFix before merging.
 * **Monitor Action Runs:** Regularly check the GitHub Action logs for successful runs and any reported issues.
 * **Use Recommended LLMs:** For the best experience, Contrast recommends using the Anthropic Claude Sonnet 4.5 model.
@@ -323,7 +383,9 @@ SmartFix collects telemetry data to help improve the service and diagnose issues
 ## FAQ
 
 * **Q: Can I use SmartFix if I don't use Contrast Assess?**
-  * A: No, SmartFix relies on vulnerability data from Contrast Assess. In the future we plan to expand to include more.
+  * A: Yes, if your organization uses static analysis (NorthStar/SAST), SmartFix can operate in SAST-only mode — simply omit `contrast_app_id` and `contrast_app_ids` from your workflow configuration. If applications in your NorthStar-only organization are also instrumented with the Contrast Agent, set `contrast_app_id`/`contrast_app_ids` and SmartFix will additionally address IAST issues for those applications. SmartFix still requires a Contrast account and organization.
+* **Q: Do I need to specify `build_command`?**
+  * A: Usually no! SmartFix automatically detects build commands for common build systems (Maven, Gradle, npm, pytest, .NET, PHP, etc.). If auto-detection doesn't work for your project, you can manually specify `build_command`.
 * **Q: How often does SmartFix run?**
   * A: This is determined by the `schedule` trigger in your GitHub Actions workflow file. You can customize it.
 * **Q: What happens if the AI cannot generate a fix?**

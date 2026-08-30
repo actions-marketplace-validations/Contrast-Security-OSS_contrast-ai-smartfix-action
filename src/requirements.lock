@@ -187,6 +187,8 @@ googleapis-common-protos==1.70.0
     #   opentelemetry-exporter-otlp-proto-http
 graphviz==0.20.3
     # via google-adk
+greenlet==3.4.0
+    # via sqlalchemy
 grpc-google-iam-v1==0.14.2
     # via
     #   google-cloud-bigtable
@@ -279,6 +281,8 @@ opentelemetry-api==1.37.0
     #   opentelemetry-exporter-gcp-monitoring
     #   opentelemetry-exporter-gcp-trace
     #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-httpx
     #   opentelemetry-resourcedetector-gcp
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
@@ -293,7 +297,13 @@ opentelemetry-exporter-gcp-trace==1.9.0
 opentelemetry-exporter-otlp-proto-common==1.37.0
     # via opentelemetry-exporter-otlp-proto-http
 opentelemetry-exporter-otlp-proto-http==1.37.0
-    # via google-adk
+    # via
+    #   -r src/requirements.txt
+    #   google-adk
+opentelemetry-instrumentation==0.58b0
+    # via opentelemetry-instrumentation-httpx
+opentelemetry-instrumentation-httpx==0.58b0
+    # via -r src/requirements.txt
 opentelemetry-proto==1.37.0
     # via
     #   opentelemetry-exporter-otlp-proto-common
@@ -307,6 +317,7 @@ opentelemetry-resourcedetector-gcp==1.9.0a0
     #   opentelemetry-exporter-gcp-trace
 opentelemetry-sdk==1.37.0
     # via
+    #   -r src/requirements.txt
     #   google-adk
     #   google-cloud-aiplatform
     #   google-cloud-spanner
@@ -318,13 +329,18 @@ opentelemetry-sdk==1.37.0
 opentelemetry-semantic-conventions==0.58b0
     # via
     #   google-cloud-spanner
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-httpx
     #   opentelemetry-sdk
-packaging==26.0
+opentelemetry-util-http==0.58b0
+    # via opentelemetry-instrumentation-httpx
+packaging==26.1
     # via
     #   -r src/requirements.txt
     #   google-cloud-aiplatform
     #   google-cloud-bigquery
     #   huggingface-hub
+    #   opentelemetry-instrumentation
 propcache==0.3.1
     # via
     #   aiohttp
@@ -510,7 +526,10 @@ websockets==15.0.1
     #   google-adk
     #   google-genai
 wrapt==1.17.2
-    # via deprecated
+    # via
+    #   deprecated
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-httpx
 yarl==1.20.0
     # via aiohttp
 zipp==3.23.0

@@ -100,6 +100,19 @@ class GitOperations:
         log(f"Committing changes with message: '{message}'")
         run_command(["git", "commit", "-m", message])  # run_command exits on failure
 
+    def get_staged_files_count(self) -> int:
+        """Returns the count of files staged for commit.
+
+        Uses 'git diff --cached --name-only' to list staged files.
+
+        Returns:
+            int: Number of staged files
+        """
+        output = run_command(["git", "diff", "--cached", "--name-only"], check=False)
+        if not output:
+            return 0
+        return len([f for f in output.splitlines() if f.strip()])
+
     def get_uncommitted_changed_files(self) -> List[str]:
         """Gets the list of files that have been modified but not yet committed.
 
@@ -120,25 +133,6 @@ class GitOperations:
         changed_files = [f for f in diff_output.splitlines() if f.strip()]
         debug_log(f"Uncommitted changed files: {changed_files}")
         return changed_files
-
-    def get_last_commit_changed_files(self) -> List[str]:
-        """Gets the list of files changed in the most recent commit."""
-        debug_log("Getting files changed in the last commit...")
-        # Use --no-pager to prevent potential hanging
-        # Use HEAD~1..HEAD to specify the range (last commit)
-        # Use --name-only to get just the file paths
-        # Use check=True because if this fails, something is wrong with the commit history
-        diff_output = run_command(["git", "--no-pager", "diff", "HEAD~1..HEAD", "--name-only"])
-        changed_files = diff_output.splitlines()
-        debug_log(f"Files changed in last commit: {changed_files}")
-        return changed_files
-
-    def amend_commit(self) -> None:
-        """Amends the last commit with currently staged changes, reusing the previous message."""
-        from src.utils import log
-        log("Amending the previous commit with QA fixes...")
-        # Use --no-edit to keep the original commit message
-        run_command(["git", "commit", "--amend", "--no-edit"])  # run_command exits on failure
 
     def push_branch(self, branch_name: str) -> None:
         """Pushes the current branch to the remote repository using environment variable authentication."""

@@ -2,7 +2,7 @@
 # #%L
 # Contrast AI SmartFix
 # %%
-# Copyright (C) 2025 Contrast Security, Inc.
+# Copyright (C) 2026 Contrast Security, Inc.
 # %%
 # Contact: support@contrastsecurity.com
 # License: Commercial
@@ -21,7 +21,7 @@
 Tests for sub_agent_executor.py module.
 
 Tests the SubAgentExecutor class including:
-- Agent creation (fix and qa agents)
+- Agent creation (fix agents)
 - Event processing and execution
 - Telemetry collection
 - Error handling and cleanup
@@ -44,7 +44,7 @@ class TestSubAgentExecutorInitialization(unittest.TestCase):
         should use config default value.
         """
         # Arrange & Act
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -59,7 +59,7 @@ class TestSubAgentExecutorInitialization(unittest.TestCase):
         should override config default.
         """
         # Arrange & Act
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor(max_events=50)
 
@@ -76,7 +76,7 @@ class TestSubAgentExecutorStatisticsCollection(unittest.TestCase):
         should extract total tokens and cost correctly.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -100,7 +100,7 @@ class TestSubAgentExecutorStatisticsCollection(unittest.TestCase):
         should return the numeric value directly.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -124,7 +124,7 @@ class TestSubAgentExecutorStatisticsCollection(unittest.TestCase):
         should return default values (0, 0.0).
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -149,7 +149,7 @@ class TestSubAgentExecutorContentProcessing(unittest.TestCase):
         should extract and return the message text.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -158,7 +158,7 @@ class TestSubAgentExecutorContentProcessing(unittest.TestCase):
         mock_event.content.text = "Agent is analyzing the code..."
 
         # Act
-        result = executor._process_content(mock_event, "fix")
+        result = executor._process_content(mock_event)
 
         # Assert
         self.assertEqual(result, "Agent is analyzing the code...")
@@ -169,7 +169,7 @@ class TestSubAgentExecutorContentProcessing(unittest.TestCase):
         should extract message from parts.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -179,7 +179,7 @@ class TestSubAgentExecutorContentProcessing(unittest.TestCase):
         mock_event.content.parts = [Mock(text="Processing vulnerability...")]
 
         # Act
-        result = executor._process_content(mock_event, "qa")
+        result = executor._process_content(mock_event)
 
         # Assert
         self.assertEqual(result, "Processing vulnerability...")
@@ -190,7 +190,7 @@ class TestSubAgentExecutorContentProcessing(unittest.TestCase):
         should return None.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -198,7 +198,7 @@ class TestSubAgentExecutorContentProcessing(unittest.TestCase):
         mock_event.content = None
 
         # Act
-        result = executor._process_content(mock_event, "fix")
+        result = executor._process_content(mock_event)
 
         # Assert
         self.assertIsNone(result)
@@ -213,7 +213,7 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
         should call error_exit with AGENT_FAILURE.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.error_exit') as mock_error_exit:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             # Make error_exit raise SystemExit to stop execution (simulates real behavior)
@@ -229,7 +229,6 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
                     target_folder=Path("/tmp/test"),
                     remediation_id="test-123",
                     session_id="session-456",
-                    agent_type="fix",
                     system_prompt="Test prompt"
                 ))
 
@@ -245,7 +244,7 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
         should call error_exit with AGENT_FAILURE.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.error_exit') as mock_error_exit:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             # Make error_exit raise SystemExit to stop execution
@@ -261,7 +260,6 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
                     target_folder=Path("/tmp/test"),
                     remediation_id="test-123",
                     session_id="session-456",
-                    agent_type="fix",
                     system_prompt=None
                 ))
 
@@ -276,7 +274,7 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
         should create agent successfully with standard model.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm') as mock_llm_class, \
              patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent') as mock_agent_class:
 
@@ -303,7 +301,6 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
                 target_folder=Path("/tmp/test"),
                 remediation_id="test-123",
                 session_id="session-456",
-                agent_type="fix",
                 system_prompt="You are a helpful fix agent"
             ))
 
@@ -314,6 +311,8 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
             call_kwargs = mock_llm_class.call_args[1]
             self.assertEqual(call_kwargs["model"], "claude-sonnet-4.5")
             self.assertEqual(call_kwargs["temperature"], 0.2)
+            # Attribution headers should not be present for non-Contrast LLM
+            self.assertNotIn("extra_headers", call_kwargs)
             # Verify agent was created
             mock_agent_class.assert_called_once()
             agent_kwargs = mock_agent_class.call_args[1]
@@ -326,7 +325,7 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
         should create agent with Contrast LLM and custom headers.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm') as mock_llm_class, \
              patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent') as mock_agent_class, \
              patch('src.smartfix.domains.agents.sub_agent_executor.setup_contrast_provider') as mock_setup:
@@ -355,8 +354,7 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
                 target_folder=Path("/tmp/test"),
                 remediation_id="test-123",
                 session_id="session-456",
-                agent_type="qa",
-                system_prompt="You are a helpful QA agent"
+                system_prompt="You are a helpful fix agent"
             ))
 
             # Assert
@@ -370,11 +368,16 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
             headers = call_kwargs["extra_headers"]
             self.assertEqual(headers["Api-Key"], "test-api-key")
             self.assertEqual(headers["Authorization"], "test-auth-key")
-            self.assertEqual(headers["x-contrast-llm-session-id"], "session-456")
-            # Verify agent was created with qa name
+            self.assertEqual(headers["x-contrast-llm-feature"], "SMARTFIX")
+            self.assertEqual(headers["x-contrast-llm-session-id"], "test-123")
+            # Attribution headers with empty defaults should be absent
+            self.assertNotIn("x-contrast-llm-fingerprint", headers)
+            self.assertNotIn("x-contrast-llm-repo", headers)
+            self.assertNotIn("x-contrast-llm-source-language", headers)
+            # Verify agent was created with fix agent name
             mock_agent_class.assert_called_once()
             agent_kwargs = mock_agent_class.call_args[1]
-            self.assertEqual(agent_kwargs["name"], "contrast_qa_agent")
+            self.assertEqual(agent_kwargs["name"], "contrast_fix_agent")
 
     def test_create_agent_handles_creation_exception(self):
         """
@@ -382,7 +385,7 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
         should call error_exit with INVALID_LLM_CONFIG.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm') as mock_llm_class, \
              patch('src.smartfix.domains.agents.sub_agent_executor.error_exit') as mock_error_exit:
 
@@ -407,7 +410,6 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
                     target_folder=Path("/tmp/test"),
                     remediation_id="test-123",
                     session_id="session-456",
-                    agent_type="fix",
                     system_prompt="Test prompt"
                 ))
 
@@ -416,6 +418,125 @@ class TestSubAgentExecutorAgentCreation(unittest.TestCase):
             call_args = mock_error_exit.call_args[0]
             self.assertEqual(call_args[0], "test-123")
             self.assertIn("INVALID_LLM_CONFIG", call_args[1])
+
+
+class TestSubAgentExecutorAttributionHeaders(unittest.TestCase):
+    """Test LLM usage attribution headers for Contrast LLM path."""
+
+    def test_contrast_llm_includes_all_attribution_headers(self):
+        """
+        Given all attribution parameters are provided,
+        when creating an agent with Contrast LLM,
+        then all x-contrast-llm-* headers should be present.
+        """
+        with patch('src.config.get_config') as mock_config, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm') as mock_llm_class, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent') as mock_agent_class, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.setup_contrast_provider'):
+
+            mock_config.return_value = Mock(
+                MAX_EVENTS_PER_AGENT=120,
+                USE_CONTRAST_LLM=True,
+                AGENT_MODEL="contrast/claude-sonnet-4-5",
+                CONTRAST_API_KEY="test-api-key",
+                CONTRAST_AUTHORIZATION_KEY="test-auth-key",
+            )
+            executor = SubAgentExecutor()
+            executor.mcp_manager.get_tools = AsyncMock(return_value=[Mock()])
+            mock_llm_class.return_value = Mock()
+            mock_agent_class.return_value = Mock()
+
+            asyncio.run(executor.create_agent(
+                target_folder=Path("/tmp/test"),
+                remediation_id="rem-001",
+                session_id="sess-001",
+                system_prompt="Fix the vulnerability",
+                vuln_uuid="3MUU-1GC8-U6DE-KDUO",
+                repo_slug="Contrast-Security-Inc/employee-management",
+                language="Java",
+            ))
+
+            headers = mock_llm_class.call_args[1]["extra_headers"]
+            self.assertEqual(headers["x-contrast-llm-feature"], "SMARTFIX")
+            self.assertEqual(headers["x-contrast-llm-fingerprint"], "3MUU-1GC8-U6DE-KDUO")
+            self.assertEqual(headers["x-contrast-llm-session-id"], "rem-001")
+            self.assertEqual(headers["x-contrast-llm-repo"], "Contrast-Security-Inc/employee-management")
+            self.assertEqual(headers["x-contrast-llm-source-language"], "Java")
+
+    def test_contrast_llm_omits_empty_attribution_headers(self):
+        """
+        Given attribution parameters are empty strings,
+        when creating an agent with Contrast LLM,
+        then optional x-contrast-llm-* headers should be absent.
+        """
+        with patch('src.config.get_config') as mock_config, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm') as mock_llm_class, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent') as mock_agent_class, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.setup_contrast_provider'):
+
+            mock_config.return_value = Mock(
+                MAX_EVENTS_PER_AGENT=120,
+                USE_CONTRAST_LLM=True,
+                AGENT_MODEL="contrast/claude-sonnet-4-5",
+                CONTRAST_API_KEY="test-api-key",
+                CONTRAST_AUTHORIZATION_KEY="test-auth-key",
+            )
+            executor = SubAgentExecutor()
+            executor.mcp_manager.get_tools = AsyncMock(return_value=[Mock()])
+            mock_llm_class.return_value = Mock()
+            mock_agent_class.return_value = Mock()
+
+            asyncio.run(executor.create_agent(
+                target_folder=Path("/tmp/test"),
+                remediation_id="",
+                session_id="sess-001",
+                system_prompt="Fix the vulnerability",
+                vuln_uuid="",
+                repo_slug="",
+                language="",
+            ))
+
+            headers = mock_llm_class.call_args[1]["extra_headers"]
+            # Feature header is always present
+            self.assertEqual(headers["x-contrast-llm-feature"], "SMARTFIX")
+            # All others should be absent when their source values are empty
+            self.assertNotIn("x-contrast-llm-fingerprint", headers)
+            self.assertNotIn("x-contrast-llm-session-id", headers)
+            self.assertNotIn("x-contrast-llm-repo", headers)
+            self.assertNotIn("x-contrast-llm-source-language", headers)
+
+    def test_standard_llm_does_not_receive_attribution_headers(self):
+        """
+        Given attribution parameters are provided,
+        when creating an agent with a standard (non-Contrast) LLM,
+        then no extra_headers should be passed to SmartFixLiteLlm.
+        """
+        with patch('src.config.get_config') as mock_config, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLiteLlm') as mock_llm_class, \
+             patch('src.smartfix.domains.agents.sub_agent_executor.SmartFixLlmAgent') as mock_agent_class:
+
+            mock_config.return_value = Mock(
+                MAX_EVENTS_PER_AGENT=120,
+                USE_CONTRAST_LLM=False,
+                AGENT_MODEL="claude-sonnet-4-5",
+            )
+            executor = SubAgentExecutor()
+            executor.mcp_manager.get_tools = AsyncMock(return_value=[Mock()])
+            mock_llm_class.return_value = Mock()
+            mock_agent_class.return_value = Mock()
+
+            asyncio.run(executor.create_agent(
+                target_folder=Path("/tmp/test"),
+                remediation_id="rem-001",
+                session_id="sess-001",
+                system_prompt="Fix the vulnerability",
+                vuln_uuid="3MUU-1GC8-U6DE-KDUO",
+                repo_slug="Contrast-Security-Inc/employee-management",
+                language="Java",
+            ))
+
+            call_kwargs = mock_llm_class.call_args[1]
+            self.assertNotIn("extra_headers", call_kwargs)
 
 
 class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
@@ -427,7 +548,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         should process each call and add to telemetry.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -443,7 +564,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         telemetry = []
 
         # Act
-        executor._process_function_calls(mock_event, "fix", telemetry)
+        executor._process_function_calls(mock_event, telemetry)
 
         # Assert
         self.assertEqual(len(telemetry), 2)
@@ -458,7 +579,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         should not add anything to telemetry.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -468,7 +589,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         telemetry = []
 
         # Act
-        executor._process_function_calls(mock_event, "fix", telemetry)
+        executor._process_function_calls(mock_event, telemetry)
 
         # Assert
         self.assertEqual(len(telemetry), 0)
@@ -479,7 +600,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         should mark as SUCCESS in telemetry.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -492,7 +613,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         telemetry = []
 
         # Act
-        executor._process_function_responses(mock_event, "fix", telemetry)
+        executor._process_function_responses(mock_event, telemetry)
 
         # Assert
         self.assertEqual(len(telemetry), 1)
@@ -505,7 +626,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         should mark as FAILURE in telemetry.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -518,7 +639,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         telemetry = []
 
         # Act
-        executor._process_function_responses(mock_event, "qa", telemetry)
+        executor._process_function_responses(mock_event, telemetry)
 
         # Assert
         self.assertEqual(len(telemetry), 1)
@@ -531,7 +652,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         should mark as UNKNOWN in telemetry.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -544,7 +665,7 @@ class TestSubAgentExecutorFunctionProcessing(unittest.TestCase):
         telemetry = []
 
         # Act
-        executor._process_function_responses(mock_event, "fix", telemetry)
+        executor._process_function_responses(mock_event, telemetry)
 
         # Assert
         self.assertEqual(len(telemetry), 1)
@@ -561,7 +682,7 @@ class TestSubAgentExecutorExceptionHandling(unittest.TestCase):
         should log at debug level and cleanup event stream without exiting.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.error_exit') as mock_error_exit:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
@@ -584,7 +705,7 @@ class TestSubAgentExecutorExceptionHandling(unittest.TestCase):
         should log specific error message and call error_exit.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config, \
+        with patch('src.config.get_config') as mock_config, \
              patch('src.smartfix.domains.agents.sub_agent_executor.error_exit') as mock_error_exit:
             mock_config.return_value = Mock(
                 MAX_EVENTS_PER_AGENT=120,
@@ -616,7 +737,7 @@ class TestSubAgentExecutorCleanup(unittest.TestCase):
         should call aclose to cleanup.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -635,7 +756,7 @@ class TestSubAgentExecutorCleanup(unittest.TestCase):
         should return early without error.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -650,7 +771,7 @@ class TestSubAgentExecutorCleanup(unittest.TestCase):
         should handle gracefully without raising.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 
@@ -669,7 +790,7 @@ class TestSubAgentExecutorCleanup(unittest.TestCase):
         should handle gracefully without raising.
         """
         # Arrange
-        with patch('src.smartfix.domains.agents.sub_agent_executor.get_config') as mock_config:
+        with patch('src.config.get_config') as mock_config:
             mock_config.return_value = Mock(MAX_EVENTS_PER_AGENT=120)
             executor = SubAgentExecutor()
 

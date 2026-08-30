@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, Mock
 from src.smartfix.domains.scm.git_operations import GitOperations
 
 
@@ -13,7 +13,7 @@ class TestGitOperations(unittest.TestCase):
         # Mock the config to avoid requiring environment variables in tests
         patcher = patch('src.utils.get_config')
         self.mock_config = patcher.start()
-        self.mock_config.return_value = MagicMock(
+        self.mock_config.return_value = Mock(
             BASE_BRANCH="main",
             testing=True
         )
@@ -80,18 +80,10 @@ class TestGitOperations(unittest.TestCase):
         self.assertEqual(result, expected)
 
     @patch('src.smartfix.domains.scm.git_operations.run_command')
-    def test_get_last_commit_changed_files(self, mock_run_command):
-        """Test getting files changed in last commit."""
-        mock_run_command.return_value = "src/file1.py\nsrc/file2.js\ndocs/readme.md"
-        result = self.git_ops.get_last_commit_changed_files()
-        expected = ["src/file1.py", "src/file2.js", "docs/readme.md"]
-        self.assertEqual(result, expected)
-
-    @patch('src.smartfix.domains.scm.git_operations.run_command')
     def test_push_branch(self, mock_run_command):
         """Test pushing branch."""
         with patch('src.smartfix.domains.scm.git_operations.get_config') as mock_config:
-            mock_config.return_value = MagicMock(
+            mock_config.return_value = Mock(
                 GITHUB_TOKEN="mock-token",
                 GITHUB_SERVER_URL="https://mockhub.com",
                 GITHUB_REPOSITORY="mock/repo",
@@ -115,6 +107,21 @@ class TestGitOperations(unittest.TestCase):
             env = call_kwargs['env']
             self.assertEqual(env.get('GIT_USERNAME'), 'x-access-token')
             self.assertEqual(env.get('GIT_PASSWORD'), 'mock-token')
+
+    @patch('src.smartfix.domains.scm.git_operations.run_command')
+    def test_get_staged_files_count_returns_file_count(self, mock_run_command):
+        """get_staged_files_count() returns the number of staged files."""
+        mock_run_command.return_value = "src/foo.py\nsrc/bar.py\nREADME.md"
+        result = self.git_ops.get_staged_files_count()
+        self.assertEqual(result, 3)
+        mock_run_command.assert_called_once_with(["git", "diff", "--cached", "--name-only"], check=False)
+
+    @patch('src.smartfix.domains.scm.git_operations.run_command')
+    def test_get_staged_files_count_returns_zero_when_nothing_staged(self, mock_run_command):
+        """get_staged_files_count() returns 0 when nothing is staged."""
+        mock_run_command.return_value = ""
+        result = self.git_ops.get_staged_files_count()
+        self.assertEqual(result, 0)
 
     # NOTE: test_extract_issue_number_from_branch moved to test_github_operations.py
     # This method is now in GitHubOperations (GitHub-specific operation using GraphQL)

@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+# -
+# #%L
+# Contrast AI SmartFix
+# %%
+# Copyright (C) 2026 Contrast Security, Inc.
+# %%
+# Contact: support@contrastsecurity.com
+# License: Commercial
+# NOTICE: This Software and the patented inventions embodied within may only be
+# used as part of Contrast Security's commercial offerings. Even though it is
+# made available through public repositories, use of this Software is subject to
+# the applicable End User Licensing Agreement found at
+# https://www.contrastsecurity.com/enduser-terms-0317a or as otherwise agreed
+# between Contrast Security and the End User. The Software may not be reverse
+# engineered, modified, repackaged, sold, redistributed or otherwise used in a
+# way not consistent with the End User License Agreement.
+# #L%
+#
+
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch, Mock
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+
+import src.smartfix.domains.telemetry.otel_provider as otel_provider
+
+
+def _config(**kwargs):
+    defaults = dict(
+        VERSION="v1.0.11",
+        CONTRAST_ORG_ID="test-org",
+        GITHUB_SERVER_URL="https://github.com",
+        GITHUB_REPOSITORY="Contrast-Security-OSS/contrast-ai-smartfix-action",
+        GITHUB_RUN_ID="12345678",
+        ENABLE_FULL_TELEMETRY=True,
+        CONTRAST_AUTHORIZATION_KEY="test-auth-key",
+        CONTRAST_API_KEY="test-api-key",
+    )
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+class TestOtelProvider(unittest.TestCase):
+
+    def setUp(self):
+        # Reset module-level state.
+        otel_provider._tracer_provider = None
+        otel_provider._shutdown_called = False
+        # Clear any OTel-related env vars set in previous tests.
+        for var in (
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
+        ):
+            os.environ.pop(var, None)
+        # Reset global tracer provider to a clean no-op SDK provider.
+        # We use a bare TracerProvider (no exporters) so spans are valid objects
+        # but nothing is exported — clean slate for each test.
+        trace.set_tracer_provider(TracerProvider())
+
+    def tearDown(self):
+        # Reset global provider so the real SDK TracerProvider installed by a test
+        # does not bleed into subsequent tests.
+        trace.set_tracer_provider(TracerProvider())
+        # Shut down any MeterProvider created by initialize_otel() so the OTLP
+        # exporter doesn't try to flush at process exit (producing connection
+        # refused tracebacks in CI where no collector is running).
+        if otel_provider._meter_provider is not None:
+            try:
+                otel_provider._meter_provider.shutdown()
+            except Exception:
+                pass
+            otel_provider._meter_provider = None
+        otel_provider._tracer_provider = None
+        otel_provider._shutdown_called = False
+        os.environ.pop("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", None)
+
+    # --- initialize_otel ---
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_initialize_sets_tracer_provider_when_endpoint_present(self, mock_exporter_cls):
+        """initialize_otel() creates a real TracerProvider when endpoint env var is set."""
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+        mock_exporter_cls.return_value = Mock()
+
+        otel_provider.initialize_otel(_config())
+
+        self.assertIsNotNone(otel_provider._tracer_provider)
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_initialize_sets_correct_resource_attributes(self, mock_exporter_cls):
+        """Resource attributes on the TracerProvider match config values exactly.
+
+        Compares the full set of attributes within the namespaces we own
+        (service.*, vcs.*, contrast.*) so that adding or removing an attribute
+        forces an explicit test update. SDK-injected attributes
+        (telemetry.sdk.*) are excluded from the comparison.
+        """
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+        mock_exporter_cls.return_value = Mock()
+        cfg = _config()
+
+        otel_provider.initialize_otel(cfg)
+
+        expected = {
+            "service.name": "smartfix",
+            "service.version": cfg.VERSION,
+            "vcs.repository.url.full": f"{cfg.GITHUB_SERVER_URL}/{cfg.GITHUB_REPOSITORY}",
+            "vcs.repository.name": "contrast-ai-smartfix-action",
+            "vcs.owner.name": "Contrast-Security-OSS",
+            "vcs.provider.name": "github",
+            "contrast.org_id": cfg.CONTRAST_ORG_ID,
+        }
+        owned_namespaces = ("service.", "vcs.", "contrast.")
+        actual = {
+            k: v
+            for k, v in otel_provider._tracer_provider.resource.attributes.items()
+            if k.startswith(owned_namespaces)
+        }
+        self.assertEqual(actual, expected)
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_initialize_also_accepts_traces_specific_endpoint_var(self, mock_exporter_cls):
+        """OTEL_EXPORTER_OTLP_TRACES_ENDPOINT also enables OTel."""
+        os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://localhost:4318/v1/traces"
+        mock_exporter_cls.return_value = Mock()
+
+        otel_provider.initialize_otel(_config())
+
+        self.assertIsNotNone(otel_provider._tracer_provider)
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPMetricExporter")
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_metrics_url_does_not_include_traces_path_when_only_traces_endpoint_set(
+        self, mock_span_cls, mock_metric_cls
+    ):
+        """When only OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set, metrics must not export to .../v1/traces/v1/metrics."""
+        os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://localhost:4318/v1/traces"
+        mock_span_cls.return_value = Mock()
+        mock_metric_cls.return_value = Mock()
+
+        otel_provider.initialize_otel(_config())
+
+        mock_metric_cls.assert_called_once()
+        self.assertEqual(
+            mock_metric_cls.call_args.kwargs["endpoint"],
+            "http://localhost:4318/v1/metrics",
+        )
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPMetricExporter")
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_metrics_exporter_uses_delta_temporality(self, mock_span_cls, mock_metric_cls):
+        """Metrics export as DELTA temporality, not the SDK default CUMULATIVE.
+
+        The data platform team (datalake) standardised on delta because cumulative
+        can be derived from delta but not the reverse. The exporter must therefore
+        receive an explicit preferred_temporality map selecting DELTA for the sync
+        and observable counters and for histograms, while leaving up/down counters
+        and gauges cumulative (delta is meaningless for those).
+        """
+        from opentelemetry.sdk.metrics import (
+            Counter,
+            Histogram,
+            ObservableCounter,
+            ObservableGauge,
+            ObservableUpDownCounter,
+            UpDownCounter,
+        )
+        from opentelemetry.sdk.metrics.export import AggregationTemporality
+
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+        mock_span_cls.return_value = Mock()
+        mock_metric_cls.return_value = Mock()
+
+        otel_provider.initialize_otel(_config())
+
+        mock_metric_cls.assert_called_once()
+        temporality = mock_metric_cls.call_args.kwargs["preferred_temporality"]
+        self.assertEqual(temporality[Counter], AggregationTemporality.DELTA)
+        self.assertEqual(temporality[Histogram], AggregationTemporality.DELTA)
+        self.assertEqual(temporality[ObservableCounter], AggregationTemporality.DELTA)
+        self.assertEqual(temporality[UpDownCounter], AggregationTemporality.CUMULATIVE)
+        self.assertEqual(temporality[ObservableUpDownCounter], AggregationTemporality.CUMULATIVE)
+        self.assertEqual(temporality[ObservableGauge], AggregationTemporality.CUMULATIVE)
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPMetricExporter")
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_auth_headers_come_from_config_not_env(self, mock_span_cls, mock_metric_cls):
+        """Auth headers are always derived from config credentials, never from env vars."""
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+        mock_span_cls.return_value = Mock()
+        mock_metric_cls.return_value = Mock()
+        cfg = _config(CONTRAST_AUTHORIZATION_KEY="my-auth", CONTRAST_API_KEY="my-api")
+
+        otel_provider.initialize_otel(cfg)
+
+        expected_headers = {"Authorization": "my-auth", "API-Key": "my-api"}
+        self.assertEqual(mock_span_cls.call_args.kwargs["headers"], expected_headers)
+        self.assertEqual(mock_metric_cls.call_args.kwargs["headers"], expected_headers)
+
+    def test_initialize_is_noop_when_endpoint_absent(self):
+        """initialize_otel() does nothing when OTEL_EXPORTER_OTLP_ENDPOINT is not set."""
+        otel_provider.initialize_otel(_config())
+
+        # Module variable stays None — no real provider was installed.
+        self.assertIsNone(otel_provider._tracer_provider)
+
+    def test_noop_tracer_provider_still_yields_usable_tracer(self):
+        """Without init, trace.get_tracer() returns a no-op tracer that works silently."""
+        otel_provider.initialize_otel(_config())  # endpoint absent → no-op
+
+        # start_span() must not raise; must be usable as a context manager.
+        with otel_provider.start_span("test-span") as span:
+            # The span may be a NonRecordingSpan (no-op) but must be non-None.
+            self.assertIsNotNone(span)
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    @patch("src.smartfix.domains.telemetry.otel_provider.log")
+    def test_initialize_logs_warning_and_does_not_crash_on_setup_failure(
+        self, mock_log, mock_exporter_cls
+    ):
+        """If TracerProvider setup raises, a warning is logged and no exception propagates."""
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+        mock_exporter_cls.side_effect = RuntimeError("simulated exporter failure")
+
+        # Should not raise.
+        otel_provider.initialize_otel(_config())
+
+        # _tracer_provider must remain None (setup failed before set_tracer_provider).
+        self.assertIsNone(otel_provider._tracer_provider)
+        # log() must have been called with is_warning=True.
+        called_with_warning = any(
+            call.kwargs.get("is_warning") for call in mock_log.call_args_list
+        )
+        self.assertTrue(called_with_warning, "Expected log(is_warning=True) on setup failure")
+
+    # --- OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT ---
+
+    def test_genai_capture_content_set_to_false_when_full_telemetry_disabled(self):
+        """When ENABLE_FULL_TELEMETRY=False, capture-content env var is set to 'false'."""
+        otel_provider.initialize_otel(_config(ENABLE_FULL_TELEMETRY=False))
+        self.assertEqual(
+            os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"), "false"
+        )
+
+    def test_genai_capture_content_set_to_true_when_full_telemetry_enabled(self):
+        """When ENABLE_FULL_TELEMETRY=True, capture-content env var is set to 'true'."""
+        otel_provider.initialize_otel(_config(ENABLE_FULL_TELEMETRY=True))
+        self.assertEqual(
+            os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"), "true"
+        )
+
+    def test_genai_capture_content_defaults_to_true_when_full_telemetry_not_explicitly_set(self):
+        """When ENABLE_FULL_TELEMETRY is not passed to _config(), it defaults to True."""
+        otel_provider.initialize_otel(_config())
+        self.assertEqual(
+            os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"), "true"
+        )
+
+    def test_genai_capture_content_respects_existing_env_override(self):
+        """An explicit env var set before initialize_otel() is not overwritten (setdefault)."""
+        os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "false"
+        # Even with ENABLE_FULL_TELEMETRY=True, the pre-existing override must win.
+        otel_provider.initialize_otel(_config(ENABLE_FULL_TELEMETRY=True))
+        self.assertEqual(
+            os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"), "false"
+        )
+
+    # --- shutdown_otel ---
+
+    def test_shutdown_is_safe_without_provider(self):
+        """shutdown_otel() does nothing gracefully when no provider is active."""
+        # _tracer_provider is None (set in setUp).
+        otel_provider.shutdown_otel()  # must not raise
+
+    def test_shutdown_calls_force_flush_then_shutdown(self):
+        """shutdown_otel() calls force_flush then shutdown on the provider."""
+        mock_provider = Mock()
+        otel_provider._tracer_provider = mock_provider
+
+        otel_provider.shutdown_otel()
+
+        mock_provider.force_flush.assert_called_once_with(timeout_millis=2000)
+        mock_provider.shutdown.assert_called_once()
+
+    def test_double_shutdown_is_safe(self):
+        """Calling shutdown_otel() twice does not double-flush or raise."""
+        mock_provider = Mock()
+        otel_provider._tracer_provider = mock_provider
+
+        otel_provider.shutdown_otel()
+        otel_provider.shutdown_otel()
+
+        # Provider methods called exactly once.
+        mock_provider.force_flush.assert_called_once()
+        mock_provider.shutdown.assert_called_once()
+
+    # --- start_span ---
+
+    @patch("src.smartfix.domains.telemetry.otel_provider.OTLPSpanExporter")
+    def test_start_span_returns_context_manager_when_provider_active(self, mock_exporter_cls):
+        """start_span() returns a usable context manager when OTel is initialised."""
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+        mock_exporter_cls.return_value = Mock()
+        otel_provider.initialize_otel(_config())
+
+        with otel_provider.start_span("my-span") as span:
+            self.assertIsNotNone(span)
+
+    def test_start_span_returns_context_manager_when_provider_inactive(self):
+        """start_span() returns a usable context manager even without initialisation."""
+        with otel_provider.start_span("my-span") as span:
+            self.assertIsNotNone(span)
+
+
+class TestRequestHostHook(unittest.TestCase):
+    """The httpx request hook records the resolved host for the server.address attribute."""
+
+    def setUp(self):
+        # Reset the ContextVar to a clean state for each test.
+        otel_provider._last_request_host.set(None)
+
+    def _request(self, host):
+        """Build a stand-in for the instrumentation's RequestInfo with a url.host."""
+        return SimpleNamespace(url=SimpleNamespace(host=host))
+
+    def test_records_host_and_getter_returns_it(self):
+        otel_provider._record_request_host(Mock(), self._request("bedrock-runtime.us-east-2.amazonaws.com"))
+        self.assertEqual(otel_provider.get_last_request_host(), "bedrock-runtime.us-east-2.amazonaws.com")
+
+    def test_getter_returns_none_when_unset(self):
+        self.assertIsNone(otel_provider.get_last_request_host())
+
+    def test_clear_resets_recorded_host_to_none(self):
+        otel_provider._record_request_host(Mock(), self._request("api.anthropic.com"))
+        otel_provider.clear_last_request_host()
+        self.assertIsNone(otel_provider.get_last_request_host())
+
+    def test_empty_host_does_not_overwrite(self):
+        otel_provider._record_request_host(Mock(), self._request("api.anthropic.com"))
+        otel_provider._record_request_host(Mock(), self._request(""))
+        self.assertEqual(otel_provider.get_last_request_host(), "api.anthropic.com")
+
+    def test_hook_never_raises_on_malformed_request(self):
+        # A request object with no .url attribute must not raise into the HTTP path.
+        otel_provider._record_request_host(Mock(), object())
+        self.assertIsNone(otel_provider.get_last_request_host())
+
+    def test_async_hook_records_host(self):
+        import asyncio
+
+        async def _set_then_read():
+            # Mirror real usage: the hook is awaited and the value is read within the same
+            # event-loop run / task context, where ContextVar changes propagate. (Reading
+            # after asyncio.run returns would not see it, because asyncio.run uses a fresh
+            # context - which is fine, since the production read also happens inside the run.)
+            await otel_provider._record_request_host_async(
+                Mock(), self._request("app.contrastsecurity.com")
+            )
+            return otel_provider.get_last_request_host()
+
+        self.assertEqual(asyncio.run(_set_then_read()), "app.contrastsecurity.com")
+
+
+if __name__ == "__main__":
+    unittest.main()
